@@ -12,6 +12,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\Aggregator.Infrastructure\Aggregator.Infrastructure.csproj" />
         <ProjectReference Include="..\\Aggregator.Core\\Aggregator.Core.csproj"/>
     </ItemGroup>
 </Project>

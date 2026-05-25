@@ -1,0 +1,25 @@
+using Microsoft.EntityFrameworkCore;
+
+namespace Aggregator.Infrastructure.Persistence;
+
+public sealed class AggregatorDbContext : DbContext
+{
+    public AggregatorDbContext(DbContextOptions<AggregatorDbContext> options) : base(options)
+    {
+    }
+
+    public DbSet<TradeTickEntity> TradeTicks => Set<TradeTickEntity>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<TradeTickEntity>(entity =>
+        {
+            entity.ToTable("trade_ticks");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.Source).HasColumnName("source").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Value).HasColumnName("value").HasPrecision(18, 8);
+            entity.Property(x => x.TimestampUtc).HasColumnName("timestamp_utc").IsRequired();
+        });
+    }
+}
