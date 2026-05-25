@@ -1,44 +1,38 @@
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+
 var builder = WebApplication.CreateBuilder(args);
-
-// Add services to the container.
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+app.UseWebSockets();
+
+app.Map("/ws/exchange-a", async context =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
-
-app.UseHttpsRedirection();
-
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
+    if (!context.WebSockets.IsWebSocketRequest)
     {
-        var forecast = Enumerable.Range(1, 5).Select(index =>
-                new WeatherForecast
-                (
-                    DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-                    Random.Shared.Next(-20, 55),
-                    summaries[Random.Shared.Next(summaries.Length)]
-                ))
-            .ToArray();
-        return forecast;
-    })
-    .WithName("GetWeatherForecast")
-    .WithOpenApi();
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        return;
+    }
+
+    using var socket = await context.WebSockets.AcceptWebSocketAsync();
+
+    while (socket.State == WebSocketState.Open && !context.RequestAborted.IsCancellationRequested)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            value = Random.Shared.Next(1, 101)
+        });
+
+        var bytes = Encoding.UTF8.GetBytes(payload);
+        await socket.SendAsync(
+            bytes,
+            WebSocketMessageType.Text,
+            endOfMessage: true,
+            cancellationToken: context.RequestAborted);
+
+        await Task.Delay(TimeSpan.FromSeconds(1), context.RequestAborted);
+    }
+});
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int) (TemperatureC / 0.5556);
-}
