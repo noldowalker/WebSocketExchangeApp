@@ -1,16 +1,19 @@
 using System.Net.WebSockets;
 using System.Text;
+using Aggregator.Core.Normalization;
 
 namespace Aggregator.Worker;
 
 public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
+    private readonly ITickNormalizer _tickNormalizer;
     private readonly string _exchangeAUrl;
 
-    public Worker(ILogger<Worker> logger, IConfiguration configuration)
+    public Worker(ILogger<Worker> logger, IConfiguration configuration, ITickNormalizer tickNormalizer)
     {
         _logger = logger;
+        _tickNormalizer = tickNormalizer;
         _exchangeAUrl = configuration["Exchange:ExchangeAUrl"] ?? "ws://localhost:5121/ws/exchange-a";
     }
 
@@ -41,7 +44,21 @@ public class Worker : BackgroundService
                 builder.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
             } while (!result.EndOfMessage);
 
-            _logger.LogInformation("Raw tick: {Payload}", builder.ToString());
+            var rawPayload = builder.ToString();
+            _logger.LogInformation("Raw tick: {Payload}", rawPayload);
+
+            if (_tickNormalizer.TryNormalize(rawPayload, out var tick))
+            {
+                _logger.LogInformation(
+                    "Normalized tick: Source={Source}, Value={Value}, TimestampUtc={TimestampUtc:O}",
+                    tick!.Source,
+                    tick.Value,
+                    tick.TimestampUtc);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to normalize tick payload: {Payload}", rawPayload);
+            }
         }
     }
 }
