@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading.Channels;
 using Aggregator.Core.Normalization;
 using Aggregator.Worker.Diagnostics;
+using Aggregator.Worker.Processing;
 
 namespace Aggregator.Worker;
 
@@ -10,6 +11,7 @@ public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
     private readonly ITickNormalizer _tickNormalizer;
+    private readonly BatchingTickProcessor _batchingTickProcessor;
     private readonly ProcessingStats _stats;
     private readonly string _exchangeAUrl;
     private readonly int _maxReconnectAttempts;
@@ -19,10 +21,12 @@ public class Worker : BackgroundService
         ILogger<Worker> logger,
         IConfiguration configuration,
         ITickNormalizer tickNormalizer,
+        BatchingTickProcessor batchingTickProcessor,
         ProcessingStats stats)
     {
         _logger = logger;
         _tickNormalizer = tickNormalizer;
+        _batchingTickProcessor = batchingTickProcessor;
         _stats = stats;
         _exchangeAUrl = configuration["Exchange:ExchangeAUrl"] ?? "ws://localhost:5121/ws/exchange-a";
         _maxReconnectAttempts = GetPositiveOrZero(configuration["Reconnect:MaxAttempts"], 0);
@@ -115,18 +119,26 @@ public class Worker : BackgroundService
 
     private async Task ConsumeRawTicksAsync(ChannelReader<string> reader, CancellationToken cancellationToken)
     {
-        await foreach (var rawPayload in reader.ReadAllAsync(cancellationToken))
+        try
         {
-            _stats.IncrementChannelRead();
+            await foreach (var rawPayload in reader.ReadAllAsync(cancellationToken))
+            {
+                _stats.IncrementChannelRead();
 
-            if (_tickNormalizer.TryNormalize(rawPayload, out var tick))
-            {
-                _stats.IncrementNormalizedOk();
+                if (_tickNormalizer.TryNormalize(rawPayload, out var tick))
+                {
+                    _stats.IncrementNormalizedOk();
+                    await _batchingTickProcessor.AddAsync(tick!, cancellationToken);
+                }
+                else
+                {
+                    _stats.IncrementNormalizedFailed();
+                }
             }
-            else
-            {
-                _stats.IncrementNormalizedFailed();
-            }
+        }
+        finally
+        {
+            await _batchingTickProcessor.FlushAsync(cancellationToken);
         }
     }
 

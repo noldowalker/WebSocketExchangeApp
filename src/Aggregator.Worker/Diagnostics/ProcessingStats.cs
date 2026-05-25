@@ -13,6 +13,8 @@ public sealed class ProcessingStats
     private long _reconnectAttemptsCurrentCycle;
     private long _connectFailures;
     private long _lastReconnectDelayMs;
+    private long _batchesFlushedTotal;
+    private long _lastBatchSize;
 
     public void MarkStarted()
     {
@@ -32,6 +34,8 @@ public sealed class ProcessingStats
     public void IncrementConnectFailures() => Interlocked.Increment(ref _connectFailures);
     public void SetLastReconnectDelayMs(int delayMs) => Interlocked.Exchange(ref _lastReconnectDelayMs, delayMs);
     public void ResetReconnectCycleAttempts() => Interlocked.Exchange(ref _reconnectAttemptsCurrentCycle, 0);
+    public void IncrementBatchesFlushed() => Interlocked.Increment(ref _batchesFlushedTotal);
+    public void SetLastBatchSize(int batchSize) => Interlocked.Exchange(ref _lastBatchSize, batchSize);
 
     public StatsSnapshot Snapshot()
     {
@@ -43,6 +47,8 @@ public sealed class ProcessingStats
         var reconnectAttemptsCurrentCycle = Interlocked.Read(ref _reconnectAttemptsCurrentCycle);
         var connectFailures = Interlocked.Read(ref _connectFailures);
         var lastReconnectDelayMs = Interlocked.Read(ref _lastReconnectDelayMs);
+        var batchesFlushedTotal = Interlocked.Read(ref _batchesFlushedTotal);
+        var lastBatchSize = Interlocked.Read(ref _lastBatchSize);
         var startedAtTicks = Interlocked.Read(ref _startedAtUtcTicks);
         var elapsedSeconds = 1d;
         if (startedAtTicks > 0)
@@ -62,7 +68,9 @@ public sealed class ProcessingStats
             ReconnectAttemptsTotal: reconnectAttemptsTotal,
             ReconnectAttemptsCurrentCycle: reconnectAttemptsCurrentCycle,
             ConnectFailures: connectFailures,
-            LastReconnectDelayMs: lastReconnectDelayMs);
+            LastReconnectDelayMs: lastReconnectDelayMs,
+            BatchesFlushedTotal: batchesFlushedTotal,
+            LastBatchSize: lastBatchSize);
     }
 }
 
@@ -75,4 +83,6 @@ public sealed record StatsSnapshot(
     long ReconnectAttemptsTotal,
     long ReconnectAttemptsCurrentCycle,
     long ConnectFailures,
-    long LastReconnectDelayMs);
+    long LastReconnectDelayMs,
+    long BatchesFlushedTotal,
+    long LastBatchSize);
