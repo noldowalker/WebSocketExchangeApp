@@ -1,38 +1,24 @@
-using System.Net.WebSockets;
-using System.Text;
-using System.Text.Json;
+using FakeExchangeHost.Configuration;
+using FakeExchangeHost.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
+var tickSources = builder.Configuration.GetSection("EndpointsData").Get<List<TickSourceOptions>>() ?? [];
+if (tickSources.Count == 0)
+{
+    tickSources.Add(TickSourceOptions.Default);
+}
+
+var urls = tickSources
+    .Select(x => $"http://localhost:{x.Port}")
+    .Distinct(StringComparer.OrdinalIgnoreCase);
+
+builder.WebHost.UseUrls(urls.ToArray());
 var app = builder.Build();
 
 app.UseWebSockets();
-
-app.Map("/ws/exchange-a", async context =>
+foreach (var source in tickSources)
 {
-    if (!context.WebSockets.IsWebSocketRequest)
-    {
-        context.Response.StatusCode = StatusCodes.Status400BadRequest;
-        return;
-    }
-
-    using var socket = await context.WebSockets.AcceptWebSocketAsync();
-
-    while (socket.State == WebSocketState.Open && !context.RequestAborted.IsCancellationRequested)
-    {
-        var payload = JsonSerializer.Serialize(new
-        {
-            value = Random.Shared.Next(1, 101)
-        });
-
-        var bytes = Encoding.UTF8.GetBytes(payload);
-        await socket.SendAsync(
-            bytes,
-            WebSocketMessageType.Text,
-            endOfMessage: true,
-            cancellationToken: context.RequestAborted);
-
-        await Task.Delay(TimeSpan.FromSeconds(1), context.RequestAborted);
-    }
-});
+    app.MapTickStreamEndpoint(source);
+}
 
 app.Run();
