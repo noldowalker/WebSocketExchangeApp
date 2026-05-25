@@ -12,8 +12,8 @@ public sealed class TickSourceOptions
     };
 
     public string Name { get; init; } = "exchange-a";
-    public int Port { get; private init; } = 5000;
-    public string Resource { get; private init; } = "/ws/exchange-a";
-    public int IntervalMs { get; private init; } = 1000;
-    public string PayloadJson { get; private init; } = "{\"value\":42}";
+    public int Port { get; init; } = 5000;
+    public string Resource { get; init; } = "/ws/exchange-a";
+    public int IntervalMs { get; init; } = 1000;
+    public string PayloadJson { get; init; } = "{\"value\":42}";
 }
