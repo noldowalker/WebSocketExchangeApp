@@ -1,5 +1,3 @@
-using System.Net.WebSockets;
-using System.Text;
 using System.Threading.Channels;
 using Aggregator.Core.Models;
 using Aggregator.Worker.Connection;
@@ -7,6 +5,7 @@ using Aggregator.Worker.Configuration;
 using Aggregator.Worker.Diagnostics;
 using Aggregator.Worker.Normalization;
 using Aggregator.Worker.Processing;
+using Aggregator.Worker.Transport;
 
 namespace Aggregator.Worker;
 
@@ -15,6 +14,7 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly IReadOnlyList<ExchangeConnectionOptions> _connections;
     private readonly IReconnectPolicy _reconnectPolicy;
+    private readonly IExchangeWebSocketTransportFactory _transportFactory;
     private readonly IExchangeTickNormalizerRouter _tickNormalizerRouter;
     private readonly BatchingTickProcessor _batchingTickProcessor;
     private readonly ProcessingStats _stats;
@@ -23,6 +23,7 @@ public class Worker : BackgroundService
         ILogger<Worker> logger,
         List<ExchangeConnectionOptions> connections,
         IReconnectPolicy reconnectPolicy,
+        IExchangeWebSocketTransportFactory transportFactory,
         IExchangeTickNormalizerRouter tickNormalizerRouter,
         BatchingTickProcessor batchingTickProcessor,
         ProcessingStats stats)
@@ -30,6 +31,7 @@ public class Worker : BackgroundService
         _logger = logger;
         _connections = connections;
         _reconnectPolicy = reconnectPolicy;
+        _transportFactory = transportFactory;
         _tickNormalizerRouter = tickNormalizerRouter;
         _batchingTickProcessor = batchingTickProcessor;
         _stats = stats;
@@ -73,28 +75,19 @@ public class Worker : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            using var socket = new ClientWebSocket();
+            await using var transport = _transportFactory.Create();
             try
             {
-                await ConnectWithTimeoutAsync(socket, new Uri(connection.Url), stoppingToken);
+                await ConnectWithTimeoutAsync(transport, new Uri(connection.Url), stoppingToken);
                 _stats.MarkStarted();
                 _stats.ResetReconnectCycleAttempts(connection.Source);
                 _logger.LogInformation("Connected to {Url} ({Source})", connection.Url, connection.Source);
 
-                var channel = Channel.CreateBounded<string>(new BoundedChannelOptions(1024)
-                {
-                    SingleReader = true,
-                    SingleWriter = true,
-                    FullMode = BoundedChannelFullMode.Wait
-                });
-
-                var producer = ProduceRawTicksAsync(connection.Source, socket, channel.Writer, stoppingToken);
-                var consumer = ConsumeRawTicksAsync(
+                await ConsumeTransportAsync(
                     connection.Source,
-                    channel.Reader,
+                    transport,
                     normalizedTicksWriter,
                     stoppingToken);
-                await Task.WhenAll(producer, consumer);
 
                 if (stoppingToken.IsCancellationRequested)
                 {
@@ -118,54 +111,15 @@ public class Worker : BackgroundService
         }
     }
 
-    private async Task ProduceRawTicksAsync(
+    private async Task ConsumeTransportAsync(
         ExchangeSource source,
-        ClientWebSocket socket,
-        ChannelWriter<string> writer,
-        CancellationToken cancellationToken)
-    {
-        var buffer = new byte[4096];
-
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested && socket.State == WebSocketState.Open)
-            {
-                var builder = new StringBuilder();
-                WebSocketReceiveResult result;
-
-                do
-                {
-                    result = await socket.ReceiveAsync(buffer, cancellationToken);
-
-                    if (result.MessageType == WebSocketMessageType.Close)
-                    {
-                        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", cancellationToken);
-                        _logger.LogInformation("WebSocket closed by server.");
-                        return;
-                    }
-
-                    builder.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
-                } while (!result.EndOfMessage);
-
-                var rawPayload = builder.ToString();
-                _stats.IncrementRawReceived(source);
-                await writer.WriteAsync(rawPayload, cancellationToken);
-            }
-        }
-        finally
-        {
-            writer.TryComplete();
-        }
-    }
-
-    private async Task ConsumeRawTicksAsync(
-        ExchangeSource source,
-        ChannelReader<string> reader,
+        IExchangeWebSocketTransport transport,
         ChannelWriter<TradeTick> normalizedTicksWriter,
         CancellationToken cancellationToken)
     {
-        await foreach (var rawPayload in reader.ReadAllAsync(cancellationToken))
+        await foreach (var rawPayload in transport.ReadMessagesAsync(cancellationToken))
         {
+            _stats.IncrementRawReceived(source);
             _stats.IncrementChannelRead(source);
 
             if (_tickNormalizerRouter.TryNormalize(source, rawPayload, out var tick))
@@ -231,12 +185,12 @@ public class Worker : BackgroundService
     }
 
     private async Task ConnectWithTimeoutAsync(
-        ClientWebSocket socket,
+        IExchangeWebSocketTransport transport,
         Uri uri,
         CancellationToken cancellationToken)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(_reconnectPolicy.ConnectTimeoutMs);
-        await socket.ConnectAsync(uri, timeoutCts.Token);
+        await transport.ConnectAsync(uri, timeoutCts.Token);
     }
 }

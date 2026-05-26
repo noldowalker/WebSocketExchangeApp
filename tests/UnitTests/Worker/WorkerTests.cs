@@ -1,0 +1,205 @@
+using Aggregator.Core.Models;
+using Aggregator.Core.Persistence;
+using Aggregator.Worker.Connection;
+using Aggregator.Worker.Configuration;
+using Aggregator.Worker.Diagnostics;
+using Aggregator.Worker.Normalization;
+using Aggregator.Worker.Processing;
+using Aggregator.Worker.Transport;
+using Microsoft.Extensions.Logging;
+using Moq;
+
+namespace UnitTests.Worker;
+
+public class WorkerTests
+{
+    [Test]
+    public async Task ExecuteAsync_WhenMessageIsNormalized_WritesTickToSink()
+    {
+        var sinkMock = new Mock<ITradeTickSink>();
+        var reconnectPolicyMock = new Mock<IReconnectPolicy>();
+        var routerMock = new Mock<IExchangeTickNormalizerRouter>();
+        var transport = new FakeTransport(["payload"]);
+        var transportFactoryMock = CreateFactory(transport);
+        var tick = new TradeTick("binance", "BTCUSDT", 100m, 1m, DateTimeOffset.UtcNow);
+        TradeTick? outTick = tick;
+
+        routerMock
+            .Setup(x => x.TryNormalize(ExchangeSource.Binance, "payload", out outTick))
+            .Returns(true);
+        reconnectPolicyMock.SetupGet(x => x.ConnectTimeoutMs).Returns(5000);
+        reconnectPolicyMock.Setup(x => x.ShouldReconnect(1)).Returns(false);
+
+        var worker = CreateWorker(
+            reconnectPolicyMock.Object,
+            transportFactoryMock.Object,
+            routerMock.Object,
+            sinkMock.Object);
+
+        await worker.RunForTestsAsync(CancellationToken.None);
+
+        sinkMock.Verify(
+            x => x.WriteBatchAsync(
+                It.Is<IReadOnlyCollection<TradeTick>>(batch => batch.Count == 1 && batch.Single() == tick),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Test]
+    public async Task ExecuteAsync_WhenMessageIsInvalid_DoesNotWriteTickToSink()
+    {
+        var sinkMock = new Mock<ITradeTickSink>();
+        var reconnectPolicyMock = new Mock<IReconnectPolicy>();
+        var routerMock = new Mock<IExchangeTickNormalizerRouter>();
+        var transport = new FakeTransport(["payload"]);
+        var transportFactoryMock = CreateFactory(transport);
+        TradeTick? outTick = null;
+
+        routerMock
+            .Setup(x => x.TryNormalize(ExchangeSource.Binance, "payload", out outTick))
+            .Returns(false);
+        reconnectPolicyMock.SetupGet(x => x.ConnectTimeoutMs).Returns(5000);
+        reconnectPolicyMock.Setup(x => x.ShouldReconnect(1)).Returns(false);
+
+        var worker = CreateWorker(
+            reconnectPolicyMock.Object,
+            transportFactoryMock.Object,
+            routerMock.Object,
+            sinkMock.Object);
+
+        await worker.RunForTestsAsync(CancellationToken.None);
+
+        sinkMock.Verify(
+            x => x.WriteBatchAsync(It.IsAny<IReadOnlyCollection<TradeTick>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Test]
+    public async Task ExecuteAsync_WhenConnectFails_TracksFailureAndReconnectAttempt()
+    {
+        var sinkMock = new Mock<ITradeTickSink>();
+        var reconnectPolicyMock = new Mock<IReconnectPolicy>();
+        var routerMock = new Mock<IExchangeTickNormalizerRouter>();
+        var transport = new FakeTransport([], new InvalidOperationException("connect failed"));
+        var transportFactoryMock = CreateFactory(transport);
+        var stats = new ProcessingStats();
+
+        reconnectPolicyMock.SetupGet(x => x.ConnectTimeoutMs).Returns(5000);
+        reconnectPolicyMock.Setup(x => x.ShouldReconnect(1)).Returns(false);
+
+        var worker = CreateWorker(
+            reconnectPolicyMock.Object,
+            transportFactoryMock.Object,
+            routerMock.Object,
+            sinkMock.Object,
+            stats);
+
+        await worker.RunForTestsAsync(CancellationToken.None);
+
+        var snapshot = stats.Snapshot();
+        Assert.That(snapshot.ConnectFailures, Is.EqualTo(1));
+        Assert.That(snapshot.ReconnectAttemptsTotal, Is.EqualTo(1));
+        Assert.That(snapshot.Connections["Binance"].ConnectFailures, Is.EqualTo(1));
+    }
+
+    private static TestableWorker CreateWorker(
+        IReconnectPolicy reconnectPolicy,
+        IExchangeWebSocketTransportFactory transportFactory,
+        IExchangeTickNormalizerRouter router,
+        ITradeTickSink sink,
+        ProcessingStats? stats = null)
+    {
+        var processingStats = stats ?? new ProcessingStats();
+        var batchingProcessor = new BatchingTickProcessor(
+            sink,
+            new BatchingOptions
+            {
+                BatchSize = 10,
+                BatchTimeoutMs = 1000
+            },
+            processingStats);
+
+        return new TestableWorker(
+            Mock.Of<ILogger<Aggregator.Worker.Worker>>(),
+            [new ExchangeConnectionOptions
+            {
+                Url = "ws://localhost:5000/ws/binance",
+                Source = ExchangeSource.Binance
+            }],
+            reconnectPolicy,
+            transportFactory,
+            router,
+            batchingProcessor,
+            processingStats);
+    }
+
+    private static Mock<IExchangeWebSocketTransportFactory> CreateFactory(IExchangeWebSocketTransport transport)
+    {
+        var factoryMock = new Mock<IExchangeWebSocketTransportFactory>();
+        factoryMock.Setup(x => x.Create()).Returns(transport);
+        return factoryMock;
+    }
+
+    private sealed class TestableWorker : Aggregator.Worker.Worker
+    {
+        public TestableWorker(
+            ILogger<Aggregator.Worker.Worker> logger,
+            List<ExchangeConnectionOptions> connections,
+            IReconnectPolicy reconnectPolicy,
+            IExchangeWebSocketTransportFactory transportFactory,
+            IExchangeTickNormalizerRouter tickNormalizerRouter,
+            BatchingTickProcessor batchingTickProcessor,
+            ProcessingStats stats)
+            : base(
+                logger,
+                connections,
+                reconnectPolicy,
+                transportFactory,
+                tickNormalizerRouter,
+                batchingTickProcessor,
+                stats)
+        {
+        }
+
+        public Task RunForTestsAsync(CancellationToken cancellationToken)
+        {
+            return ExecuteAsync(cancellationToken);
+        }
+    }
+
+    private sealed class FakeTransport : IExchangeWebSocketTransport
+    {
+        private readonly IReadOnlyList<string> _messages;
+        private readonly Exception? _connectException;
+
+        public FakeTransport(IReadOnlyList<string> messages, Exception? connectException = null)
+        {
+            _messages = messages;
+            _connectException = connectException;
+        }
+
+        public Task ConnectAsync(Uri uri, CancellationToken cancellationToken)
+        {
+            if (_connectException is not null)
+            {
+                throw _connectException;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public async IAsyncEnumerable<string> ReadMessagesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            foreach (var message in _messages)
+            {
+                await Task.Yield();
+                yield return message;
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            return ValueTask.CompletedTask;
+        }
+    }
+}

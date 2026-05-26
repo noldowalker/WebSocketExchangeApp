@@ -6,6 +6,7 @@ using Aggregator.Worker.Configuration;
 using Aggregator.Worker.Diagnostics;
 using Aggregator.Worker.Normalization;
 using Aggregator.Worker.Processing;
+using Aggregator.Worker.Transport;
 using Aggregator.Worker;
 using Microsoft.EntityFrameworkCore;
 
@@ -53,6 +54,7 @@ builder.Services.AddSingleton(sp =>
     };
 });
 builder.Services.AddSingleton<IReconnectPolicy, ExponentialBackoffReconnectPolicy>();
+builder.Services.AddSingleton<IExchangeWebSocketTransportFactory, ClientWebSocketTransportFactory>();
 builder.Services.AddSingleton<ProcessingStats>();
 builder.Services.AddSingleton<ITradeTickSink, PostgresTradeTickSink>();
 builder.Services.AddSingleton(sp =>
