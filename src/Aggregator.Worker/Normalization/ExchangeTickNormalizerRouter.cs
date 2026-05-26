@@ -7,13 +7,16 @@ public sealed class ExchangeTickNormalizerRouter : IExchangeTickNormalizerRouter
 {
     private readonly ITickNormalizer<BinanceTick> _binanceTickNormalizer;
     private readonly ITickNormalizer<CoinbaseTick> _coinbaseTickNormalizer;
+    private readonly ITickNormalizer<KrakenTick> _krakenTickNormalizer;
 
     public ExchangeTickNormalizerRouter(
         ITickNormalizer<BinanceTick> binanceTickNormalizer,
-        ITickNormalizer<CoinbaseTick> coinbaseTickNormalizer)
+        ITickNormalizer<CoinbaseTick> coinbaseTickNormalizer,
+        ITickNormalizer<KrakenTick> krakenTickNormalizer)
     {
         _binanceTickNormalizer = binanceTickNormalizer;
         _coinbaseTickNormalizer = coinbaseTickNormalizer;
+        _krakenTickNormalizer = krakenTickNormalizer;
     }
 
     public bool TryNormalize(ExchangeSource source, string rawPayload, out TradeTick? tick)
@@ -48,6 +51,20 @@ public sealed class ExchangeTickNormalizerRouter : IExchangeTickNormalizerRouter
                     Price: coinbaseTick.Price,
                     Volume: coinbaseTick.Volume,
                     TimestampUtc: coinbaseTick.EventTimeUtc);
+                return true;
+
+            case ExchangeSource.Kraken:
+                if (!_krakenTickNormalizer.TryNormalize(rawPayload, out var krakenTick))
+                {
+                    return false;
+                }
+
+                tick = new TradeTick(
+                    Source: "kraken",
+                    Ticker: krakenTick!.Ticker,
+                    Price: krakenTick.Price,
+                    Volume: krakenTick.Volume,
+                    TimestampUtc: krakenTick.EventTimeUtc);
                 return true;
 
             default:

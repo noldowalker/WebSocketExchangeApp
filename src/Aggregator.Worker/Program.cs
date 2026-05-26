@@ -17,6 +17,7 @@ builder.Services.AddDbContextFactory<AggregatorDbContext>(options =>
 
 builder.Services.AddSingleton<ITickNormalizer<Aggregator.Core.Models.BinanceTick>, BinanceTickNormalizer>();
 builder.Services.AddSingleton<ITickNormalizer<Aggregator.Core.Models.CoinbaseTick>, CoinbaseTickNormalizer>();
+builder.Services.AddSingleton<ITickNormalizer<Aggregator.Core.Models.KrakenTick>, KrakenTickNormalizer>();
 builder.Services.AddSingleton<IExchangeTickNormalizerRouter, ExchangeTickNormalizerRouter>();
 builder.Services.AddSingleton(sp =>
 {

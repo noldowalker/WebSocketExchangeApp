@@ -11,6 +11,7 @@ public sealed class BatchingTickProcessor
     private readonly int _batchSize;
     private readonly TimeSpan _batchTimeout;
     private readonly List<TradeTick> _buffer;
+    private readonly HashSet<TradeTick> _bufferSet;
     private DateTimeOffset _lastFlushAtUtc;
 
     public BatchingTickProcessor(
@@ -23,12 +24,17 @@ public sealed class BatchingTickProcessor
         _batchSize = Math.Max(1, options.BatchSize);
         _batchTimeout = TimeSpan.FromMilliseconds(Math.Max(1, options.BatchTimeoutMs));
         _buffer = new List<TradeTick>(_batchSize);
+        _bufferSet = new HashSet<TradeTick>();
         _lastFlushAtUtc = DateTimeOffset.UtcNow;
     }
 
     public async Task AddAsync(TradeTick tick, CancellationToken cancellationToken)
     {
-        _buffer.Add(tick);
+        if (_bufferSet.Add(tick))
+        {
+            _buffer.Add(tick);
+        }
+
         var timeoutReached = DateTimeOffset.UtcNow - _lastFlushAtUtc >= _batchTimeout;
         if (_buffer.Count >= _batchSize || timeoutReached)
         {
@@ -46,6 +52,7 @@ public sealed class BatchingTickProcessor
         var batchSize = _buffer.Count;
         var batch = _buffer.ToArray();
         _buffer.Clear();
+        _bufferSet.Clear();
         _lastFlushAtUtc = DateTimeOffset.UtcNow;
         await _sink.WriteBatchAsync(batch, cancellationToken);
         _stats.SetLastBatchSize(batchSize);

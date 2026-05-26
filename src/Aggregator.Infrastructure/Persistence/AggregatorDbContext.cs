@@ -22,6 +22,9 @@ public sealed class AggregatorDbContext : DbContext
             entity.Property(x => x.Price).HasColumnName("price").HasPrecision(18, 8);
             entity.Property(x => x.Volume).HasColumnName("volume").HasPrecision(18, 8);
             entity.Property(x => x.TimestampUtc).HasColumnName("timestamp_utc").IsRequired();
+            entity.HasIndex(x => new { x.Source, x.Ticker, x.Price, x.Volume, x.TimestampUtc })
+                .IsUnique()
+                .HasDatabaseName("ux_trade_ticks_source_ticker_price_volume_timestamp");
         });
     }
 }

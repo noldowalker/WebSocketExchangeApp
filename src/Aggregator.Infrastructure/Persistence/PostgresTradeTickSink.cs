@@ -1,6 +1,9 @@
 using Aggregator.Core.Models;
 using Aggregator.Core.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using System.Data;
+using System.Text;
 
 namespace Aggregator.Infrastructure.Persistence;
 
@@ -21,16 +24,45 @@ public sealed class PostgresTradeTickSink : ITradeTickSink
         }
 
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entities = batch.Select(x => new TradeTickEntity
+        var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
         {
-            Source = x.Source,
-            Ticker = x.Ticker,
-            Price = x.Price,
-            Volume = x.Volume,
-            TimestampUtc = x.TimestampUtc
-        });
+            await connection.OpenAsync(cancellationToken);
+        }
 
-        await dbContext.TradeTicks.AddRangeAsync(entities, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = BuildInsertCommandText(batch.Count);
+
+        var index = 0;
+        foreach (var tick in batch)
+        {
+            command.Parameters.AddWithValue($"p{index}_source", tick.Source);
+            command.Parameters.AddWithValue($"p{index}_ticker", tick.Ticker);
+            command.Parameters.AddWithValue($"p{index}_price", tick.Price);
+            command.Parameters.AddWithValue($"p{index}_volume", tick.Volume);
+            command.Parameters.AddWithValue($"p{index}_timestamp_utc", tick.TimestampUtc);
+            index++;
+        }
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static string BuildInsertCommandText(int batchSize)
+    {
+        var sql = new StringBuilder();
+        sql.Append("insert into trade_ticks (source, ticker, price, volume, timestamp_utc) values ");
+
+        for (var i = 0; i < batchSize; i++)
+        {
+            if (i > 0)
+            {
+                sql.Append(", ");
+            }
+
+            sql.Append($"(@p{i}_source, @p{i}_ticker, @p{i}_price, @p{i}_volume, @p{i}_timestamp_utc)");
+        }
+
+        sql.Append(" on conflict (source, ticker, price, volume, timestamp_utc) do nothing;");
+        return sql.ToString();
     }
 }

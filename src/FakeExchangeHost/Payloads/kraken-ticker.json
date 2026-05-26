@@ -1,0 +1,1 @@
+{"name":"Kraken","channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","last":{{PRICE}},"volume":{{VOLUME}},"timestamp":"{{TIMESTAMP_ISO}}"}]}
