@@ -1,0 +1,1 @@
+{"name":"Coinbase","type":"ticker","product_id":"BTC-USD","price":{{PRICE}},"last_size":{{VOLUME}},"time":"{{TIMESTAMP_ISO}}"}

@@ -2,7 +2,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Threading.Channels;
 using Aggregator.Core.Models;
-using Aggregator.Core.Normalization;
+using Aggregator.Worker.Configuration;
 using Aggregator.Worker.Diagnostics;
 using Aggregator.Worker.Normalization;
 using Aggregator.Worker.Processing;
@@ -12,45 +12,56 @@ namespace Aggregator.Worker;
 public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
-    private readonly ITickNormalizer<BinanceTick> _binanceTickNormalizer;
-    private readonly IExchangeSourceResolver _exchangeSourceResolver;
+    private readonly IReadOnlyList<ExchangeConnectionOptions> _connections;
+    private readonly IExchangeTickNormalizerRouter _tickNormalizerRouter;
     private readonly BatchingTickProcessor _batchingTickProcessor;
     private readonly ProcessingStats _stats;
-    private readonly string _exchangeUrl;
     private readonly int _maxReconnectAttempts;
     private readonly int _reconnectDelayMs;
 
     public Worker(
         ILogger<Worker> logger,
         IConfiguration configuration,
-        ITickNormalizer<BinanceTick> binanceTickNormalizer,
-        IExchangeSourceResolver exchangeSourceResolver,
+        List<ExchangeConnectionOptions> connections,
+        IExchangeTickNormalizerRouter tickNormalizerRouter,
         BatchingTickProcessor batchingTickProcessor,
         ProcessingStats stats)
     {
         _logger = logger;
-        _binanceTickNormalizer = binanceTickNormalizer;
-        _exchangeSourceResolver = exchangeSourceResolver;
+        _connections = connections;
+        _tickNormalizerRouter = tickNormalizerRouter;
         _batchingTickProcessor = batchingTickProcessor;
         _stats = stats;
-        _exchangeUrl = configuration["Exchange:Url"]
-            ?? configuration["Exchange:ExchangeAUrl"]
-            ?? "ws://localhost:5000/ws/binance";
         _maxReconnectAttempts = GetPositiveOrZero(configuration["Reconnect:MaxAttempts"], 0);
         _reconnectDelayMs = GetPositiveOrZero(configuration["Reconnect:DelayMs"], 1000);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (_connections.Count == 0)
+        {
+            _logger.LogWarning("No exchange connections configured.");
+            return;
+        }
+
+        var tasks = _connections
+            .Select(connection => RunConnectionLoopAsync(connection, stoppingToken))
+            .ToArray();
+
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task RunConnectionLoopAsync(ExchangeConnectionOptions connection, CancellationToken stoppingToken)
+    {
         while (!stoppingToken.IsCancellationRequested)
         {
             using var socket = new ClientWebSocket();
             try
             {
-                await socket.ConnectAsync(new Uri(_exchangeUrl), stoppingToken);
+                await socket.ConnectAsync(new Uri(connection.Url), stoppingToken);
                 _stats.MarkStarted();
                 _stats.ResetReconnectCycleAttempts();
-                _logger.LogInformation("Connected to {Url}", _exchangeUrl);
+                _logger.LogInformation("Connected to {Url} ({Source})", connection.Url, connection.Source);
 
                 var channel = Channel.CreateBounded<string>(new BoundedChannelOptions(1024)
                 {
@@ -60,7 +71,7 @@ public class Worker : BackgroundService
                 });
 
                 var producer = ProduceRawTicksAsync(socket, channel.Writer, stoppingToken);
-                var consumer = ConsumeRawTicksAsync(channel.Reader, stoppingToken);
+                var consumer = ConsumeRawTicksAsync(connection.Source, channel.Reader, stoppingToken);
                 await Task.WhenAll(producer, consumer);
 
                 if (stoppingToken.IsCancellationRequested)
@@ -75,10 +86,10 @@ public class Worker : BackgroundService
             catch (Exception ex)
             {
                 _stats.IncrementConnectFailures();
-                _logger.LogWarning(ex, "WebSocket loop failed. Will try to reconnect.");
+                _logger.LogWarning(ex, "WebSocket loop failed for {Source}. Will try to reconnect.", connection.Source);
             }
 
-            if (!await WaitBeforeReconnectAsync(stoppingToken))
+            if (!await WaitBeforeReconnectAsync(connection, stoppingToken))
             {
                 return;
             }
@@ -124,7 +135,10 @@ public class Worker : BackgroundService
         }
     }
 
-    private async Task ConsumeRawTicksAsync(ChannelReader<string> reader, CancellationToken cancellationToken)
+    private async Task ConsumeRawTicksAsync(
+        ExchangeSource source,
+        ChannelReader<string> reader,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -132,18 +146,10 @@ public class Worker : BackgroundService
             {
                 _stats.IncrementChannelRead();
 
-                var source = _exchangeSourceResolver.Resolve(rawPayload);
-                if (source == ExchangeSource.Binance &&
-                    _binanceTickNormalizer.TryNormalize(rawPayload, out var binanceTick))
+                if (_tickNormalizerRouter.TryNormalize(source, rawPayload, out var tick))
                 {
-                    var tick = new TradeTick(
-                        Source: "binance",
-                        Ticker: binanceTick!.Ticker,
-                        Price: binanceTick.Price,
-                        Volume: binanceTick.Volume,
-                        TimestampUtc: binanceTick.EventTimeUtc);
                     _stats.IncrementNormalizedOk();
-                    await _batchingTickProcessor.AddAsync(tick, cancellationToken);
+                    await _batchingTickProcessor.AddAsync(tick!, cancellationToken);
                 }
                 else
                 {
@@ -157,7 +163,9 @@ public class Worker : BackgroundService
         }
     }
 
-    private async Task<bool> WaitBeforeReconnectAsync(CancellationToken cancellationToken)
+    private async Task<bool> WaitBeforeReconnectAsync(
+        ExchangeConnectionOptions connection,
+        CancellationToken cancellationToken)
     {
         _stats.IncrementReconnectAttempt();
         _stats.SetLastReconnectDelayMs(_reconnectDelayMs);
@@ -172,8 +180,9 @@ public class Worker : BackgroundService
         }
 
         _logger.LogInformation(
-            "Reconnect attempt {Attempt} in {DelayMs}ms.",
+            "Reconnect attempt {Attempt} for {Source} in {DelayMs}ms.",
             currentAttempts,
+            connection.Source,
             _reconnectDelayMs);
 
         await Task.Delay(_reconnectDelayMs, cancellationToken);

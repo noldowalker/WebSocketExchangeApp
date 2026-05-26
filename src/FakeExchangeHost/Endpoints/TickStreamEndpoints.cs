@@ -10,6 +10,7 @@ public static class TickStreamEndpoints
     private const string PriceToken = "{{PRICE}}";
     private const string VolumeToken = "{{VOLUME}}";
     private const string TimestampMsToken = "{{TIMESTAMP_MS}}";
+    private const string TimestampIsoToken = "{{TIMESTAMP_ISO}}";
 
     public static IEndpointRouteBuilder MapTickStreamEndpoint(
         this IEndpointRouteBuilder endpoints,
@@ -30,9 +31,10 @@ public static class TickStreamEndpoints
             {
                 var price = 50000m + (decimal)Random.Shared.NextDouble() * 25000m;
                 var volume = 0.05m + (decimal)Random.Shared.NextDouble() * 15m;
-                var timestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var now = DateTimeOffset.UtcNow;
+                var timestampMs = now.ToUnixTimeMilliseconds();
 
-                var payload = RenderPayload(template, price, volume, timestampMs);
+                var payload = RenderPayload(template, price, volume, timestampMs, now);
                 var bytes = Encoding.UTF8.GetBytes(payload);
 
                 await socket.SendAsync(
@@ -48,15 +50,22 @@ public static class TickStreamEndpoints
         return endpoints;
     }
 
-    private static string RenderPayload(string template, decimal price, decimal volume, long timestampMs)
+    private static string RenderPayload(
+        string template,
+        decimal price,
+        decimal volume,
+        long timestampMs,
+        DateTimeOffset timestampUtc)
     {
         Span<char> priceBuffer = stackalloc char[32];
         Span<char> volumeBuffer = stackalloc char[32];
         Span<char> timestampBuffer = stackalloc char[32];
+        Span<char> timestampIsoBuffer = stackalloc char[64];
 
         if (!price.TryFormat(priceBuffer, out var priceCharsWritten, "0.00####", CultureInfo.InvariantCulture) ||
             !volume.TryFormat(volumeBuffer, out var volumeCharsWritten, "0.000###", CultureInfo.InvariantCulture) ||
-            !timestampMs.TryFormat(timestampBuffer, out var timestampCharsWritten, provider: CultureInfo.InvariantCulture))
+            !timestampMs.TryFormat(timestampBuffer, out var timestampCharsWritten, provider: CultureInfo.InvariantCulture) ||
+            !timestampUtc.TryFormat(timestampIsoBuffer, out var timestampIsoCharsWritten, "O", CultureInfo.InvariantCulture))
         {
             throw new InvalidOperationException("Failed to format dynamic tick values.");
         }
@@ -69,8 +78,9 @@ public static class TickStreamEndpoints
             var priceTokenIndex = template.IndexOf(PriceToken, cursor, StringComparison.Ordinal);
             var volumeTokenIndex = template.IndexOf(VolumeToken, cursor, StringComparison.Ordinal);
             var timestampTokenIndex = template.IndexOf(TimestampMsToken, cursor, StringComparison.Ordinal);
+            var timestampIsoTokenIndex = template.IndexOf(TimestampIsoToken, cursor, StringComparison.Ordinal);
 
-            var nextTokenIndex = MinPositive(priceTokenIndex, volumeTokenIndex, timestampTokenIndex);
+            var nextTokenIndex = MinPositive(priceTokenIndex, volumeTokenIndex, timestampTokenIndex, timestampIsoTokenIndex);
             if (nextTokenIndex < 0)
             {
                 builder.Append(template.AsSpan(cursor));
@@ -91,15 +101,23 @@ public static class TickStreamEndpoints
             }
             else
             {
-                builder.Append(timestampBuffer[..timestampCharsWritten]);
-                cursor = nextTokenIndex + TimestampMsToken.Length;
+                if (nextTokenIndex == timestampIsoTokenIndex)
+                {
+                    builder.Append(timestampIsoBuffer[..timestampIsoCharsWritten]);
+                    cursor = nextTokenIndex + TimestampIsoToken.Length;
+                }
+                else
+                {
+                    builder.Append(timestampBuffer[..timestampCharsWritten]);
+                    cursor = nextTokenIndex + TimestampMsToken.Length;
+                }
             }
         }
 
         return builder.ToString();
     }
 
-    private static int MinPositive(int first, int second, int third)
+    private static int MinPositive(int first, int second, int third, int fourth)
     {
         var min = int.MaxValue;
 
@@ -116,6 +134,11 @@ public static class TickStreamEndpoints
         if (third >= 0 && third < min)
         {
             min = third;
+        }
+
+        if (fourth >= 0 && fourth < min)
+        {
+            min = fourth;
         }
 
         return min == int.MaxValue ? -1 : min;

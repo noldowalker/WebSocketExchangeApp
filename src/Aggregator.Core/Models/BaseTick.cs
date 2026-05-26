@@ -5,5 +5,6 @@ public abstract record BaseTick(ExchangeSource Source);
 public enum ExchangeSource
 {
     Undefined = 0,
-    Binance = 1
+    Binance = 1,
+    Coinbase = 2
 }

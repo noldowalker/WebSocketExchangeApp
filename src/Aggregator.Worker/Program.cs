@@ -1,6 +1,7 @@
 using Aggregator.Core.Normalization;
 using Aggregator.Core.Persistence;
 using Aggregator.Infrastructure.Persistence;
+using Aggregator.Worker.Configuration;
 using Aggregator.Worker.Diagnostics;
 using Aggregator.Worker.Normalization;
 using Aggregator.Worker.Processing;
@@ -15,7 +16,28 @@ builder.Services.AddDbContextFactory<AggregatorDbContext>(options =>
     options.UseNpgsql(connectionString));
 
 builder.Services.AddSingleton<ITickNormalizer<Aggregator.Core.Models.BinanceTick>, BinanceTickNormalizer>();
-builder.Services.AddSingleton<IExchangeSourceResolver, JsonExchangeSourceResolver>();
+builder.Services.AddSingleton<ITickNormalizer<Aggregator.Core.Models.CoinbaseTick>, CoinbaseTickNormalizer>();
+builder.Services.AddSingleton<IExchangeTickNormalizerRouter, ExchangeTickNormalizerRouter>();
+builder.Services.AddSingleton(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var connections = configuration.GetSection("Exchange:Connections").Get<List<ExchangeConnectionOptions>>() ?? [];
+    if (connections.Count > 0)
+    {
+        return connections;
+    }
+
+    return new List<ExchangeConnectionOptions>
+    {
+        new()
+        {
+            Url = configuration["Exchange:Url"]
+                ?? configuration["Exchange:ExchangeAUrl"]
+                ?? "ws://localhost:5000/ws/binance",
+            Source = Aggregator.Core.Models.ExchangeSource.Binance
+        }
+    };
+});
 builder.Services.AddSingleton<ProcessingStats>();
 builder.Services.AddSingleton<ITradeTickSink, PostgresTradeTickSink>();
 builder.Services.AddSingleton(sp =>
