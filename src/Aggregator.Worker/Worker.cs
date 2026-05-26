@@ -44,14 +44,33 @@ public class Worker : BackgroundService
             return;
         }
 
-        var tasks = _connections
-            .Select(connection => RunConnectionLoopAsync(connection, stoppingToken))
+        var normalizedTicks = Channel.CreateBounded<TradeTick>(new BoundedChannelOptions(4096)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait
+        });
+
+        var processorTask = ConsumeNormalizedTicksAsync(normalizedTicks.Reader, stoppingToken);
+        var connectionTasks = _connections
+            .Select(connection => RunConnectionLoopAsync(connection, normalizedTicks.Writer, stoppingToken))
             .ToArray();
 
-        await Task.WhenAll(tasks);
+        try
+        {
+            await Task.WhenAll(connectionTasks);
+        }
+        finally
+        {
+            normalizedTicks.Writer.TryComplete();
+            await processorTask;
+        }
     }
 
-    private async Task RunConnectionLoopAsync(ExchangeConnectionOptions connection, CancellationToken stoppingToken)
+    private async Task RunConnectionLoopAsync(
+        ExchangeConnectionOptions connection,
+        ChannelWriter<TradeTick> normalizedTicksWriter,
+        CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -71,7 +90,11 @@ public class Worker : BackgroundService
                 });
 
                 var producer = ProduceRawTicksAsync(socket, channel.Writer, stoppingToken);
-                var consumer = ConsumeRawTicksAsync(connection.Source, channel.Reader, stoppingToken);
+                var consumer = ConsumeRawTicksAsync(
+                    connection.Source,
+                    channel.Reader,
+                    normalizedTicksWriter,
+                    stoppingToken);
                 await Task.WhenAll(producer, consumer);
 
                 if (stoppingToken.IsCancellationRequested)
@@ -138,23 +161,34 @@ public class Worker : BackgroundService
     private async Task ConsumeRawTicksAsync(
         ExchangeSource source,
         ChannelReader<string> reader,
+        ChannelWriter<TradeTick> normalizedTicksWriter,
+        CancellationToken cancellationToken)
+    {
+        await foreach (var rawPayload in reader.ReadAllAsync(cancellationToken))
+        {
+            _stats.IncrementChannelRead();
+
+            if (_tickNormalizerRouter.TryNormalize(source, rawPayload, out var tick))
+            {
+                _stats.IncrementNormalizedOk();
+                await normalizedTicksWriter.WriteAsync(tick!, cancellationToken);
+            }
+            else
+            {
+                _stats.IncrementNormalizedFailed();
+            }
+        }
+    }
+
+    private async Task ConsumeNormalizedTicksAsync(
+        ChannelReader<TradeTick> reader,
         CancellationToken cancellationToken)
     {
         try
         {
-            await foreach (var rawPayload in reader.ReadAllAsync(cancellationToken))
+            await foreach (var tick in reader.ReadAllAsync(cancellationToken))
             {
-                _stats.IncrementChannelRead();
-
-                if (_tickNormalizerRouter.TryNormalize(source, rawPayload, out var tick))
-                {
-                    _stats.IncrementNormalizedOk();
-                    await _batchingTickProcessor.AddAsync(tick!, cancellationToken);
-                }
-                else
-                {
-                    _stats.IncrementNormalizedFailed();
-                }
+                await _batchingTickProcessor.AddAsync(tick, cancellationToken);
             }
         }
         finally
