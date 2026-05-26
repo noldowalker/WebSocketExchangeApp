@@ -1,6 +1,7 @@
 using Aggregator.Core.Normalization;
 using Aggregator.Core.Persistence;
 using Aggregator.Infrastructure.Persistence;
+using Aggregator.Worker.Connection;
 using Aggregator.Worker.Configuration;
 using Aggregator.Worker.Diagnostics;
 using Aggregator.Worker.Normalization;
@@ -39,6 +40,19 @@ builder.Services.AddSingleton(sp =>
         }
     };
 });
+builder.Services.AddSingleton(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    return new ReconnectOptions
+    {
+        MaxAttempts = GetNonNegative(configuration["Reconnect:MaxAttempts"], 0),
+        ConnectTimeoutMs = GetPositive(configuration["Reconnect:ConnectTimeoutMs"], 5000),
+        DelayMs = GetPositive(configuration["Reconnect:DelayMs"], 3000),
+        MaxDelayMs = GetPositive(configuration["Reconnect:MaxDelayMs"], 30000),
+        JitterRatio = GetRatio(configuration["Reconnect:JitterRatio"], 0.2d)
+    };
+});
+builder.Services.AddSingleton<IReconnectPolicy, ExponentialBackoffReconnectPolicy>();
 builder.Services.AddSingleton<ProcessingStats>();
 builder.Services.AddSingleton<ITradeTickSink, PostgresTradeTickSink>();
 builder.Services.AddSingleton(sp =>
@@ -61,6 +75,26 @@ host.Run();
 static int GetPositive(string? value, int fallback)
 {
     if (!int.TryParse(value, out var parsed) || parsed <= 0)
+    {
+        return fallback;
+    }
+
+    return parsed;
+}
+
+static int GetNonNegative(string? value, int fallback)
+{
+    if (!int.TryParse(value, out var parsed) || parsed < 0)
+    {
+        return fallback;
+    }
+
+    return parsed;
+}
+
+static double GetRatio(string? value, double fallback)
+{
+    if (!double.TryParse(value, out var parsed) || parsed < 0d || parsed > 1d)
     {
         return fallback;
     }

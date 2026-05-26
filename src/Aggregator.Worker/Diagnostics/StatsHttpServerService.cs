@@ -19,8 +19,18 @@ public sealed class StatsHttpServerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _listener.Start();
-        _logger.LogInformation("Stats endpoint listening on http://localhost:5180/debug/stats");
+        try
+        {
+            _listener.Start();
+            _logger.LogInformation("Stats endpoint listening on http://localhost:5180/debug/stats");
+        }
+        catch (HttpListenerException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Stats endpoint could not start on http://localhost:5180/debug/stats. The worker will continue without HTTP stats.");
+            return;
+        }
 
         try
         {

@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Threading.Channels;
 using Aggregator.Core.Models;
+using Aggregator.Worker.Connection;
 using Aggregator.Worker.Configuration;
 using Aggregator.Worker.Diagnostics;
 using Aggregator.Worker.Normalization;
@@ -13,33 +14,25 @@ public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
     private readonly IReadOnlyList<ExchangeConnectionOptions> _connections;
+    private readonly IReconnectPolicy _reconnectPolicy;
     private readonly IExchangeTickNormalizerRouter _tickNormalizerRouter;
     private readonly BatchingTickProcessor _batchingTickProcessor;
     private readonly ProcessingStats _stats;
-    private readonly int _maxReconnectAttempts;
-    private readonly int _connectTimeoutMs;
-    private readonly int _reconnectBaseDelayMs;
-    private readonly int _reconnectMaxDelayMs;
-    private readonly double _reconnectJitterRatio;
 
     public Worker(
         ILogger<Worker> logger,
-        IConfiguration configuration,
         List<ExchangeConnectionOptions> connections,
+        IReconnectPolicy reconnectPolicy,
         IExchangeTickNormalizerRouter tickNormalizerRouter,
         BatchingTickProcessor batchingTickProcessor,
         ProcessingStats stats)
     {
         _logger = logger;
         _connections = connections;
+        _reconnectPolicy = reconnectPolicy;
         _tickNormalizerRouter = tickNormalizerRouter;
         _batchingTickProcessor = batchingTickProcessor;
         _stats = stats;
-        _maxReconnectAttempts = GetPositiveOrZero(configuration["Reconnect:MaxAttempts"], 0);
-        _connectTimeoutMs = GetPositive(configuration["Reconnect:ConnectTimeoutMs"], 5000);
-        _reconnectBaseDelayMs = GetPositive(configuration["Reconnect:DelayMs"], 3000);
-        _reconnectMaxDelayMs = GetPositive(configuration["Reconnect:MaxDelayMs"], 30000);
-        _reconnectJitterRatio = GetJitterRatio(configuration["Reconnect:JitterRatio"], 0.2d);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -198,6 +191,10 @@ public class Worker : BackgroundService
                 await _batchingTickProcessor.AddAsync(tick, cancellationToken);
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Normal shutdown.
+        }
         finally
         {
             await _batchingTickProcessor.FlushAsync(cancellationToken);
@@ -210,20 +207,17 @@ public class Worker : BackgroundService
     {
         _stats.IncrementReconnectAttempt(connection.Source);
 
-        var snapshot = _stats.Snapshot();
-        var currentAttempts = snapshot.Connections.TryGetValue(connection.Source.ToString(), out var connectionStats)
-            ? connectionStats.ReconnectAttemptsCurrentCycle
-            : 1;
-        if (_maxReconnectAttempts > 0 && currentAttempts > _maxReconnectAttempts)
+        var currentAttempts = _stats.GetReconnectAttemptsCurrentCycle(connection.Source);
+        if (!_reconnectPolicy.ShouldReconnect(currentAttempts))
         {
             _logger.LogError(
-                "Reconnect attempts exceeded the configured maximum for {Source}. MaxAttempts={MaxAttempts}",
+                "Reconnect attempts exceeded the configured maximum for {Source}. CurrentAttempts={CurrentAttempts}",
                 connection.Source,
-                _maxReconnectAttempts);
+                currentAttempts);
             return false;
         }
 
-        var delayMs = CalculateReconnectDelayMs(currentAttempts);
+        var delayMs = _reconnectPolicy.CalculateDelayMs(currentAttempts);
         _stats.SetLastReconnectDelayMs(connection.Source, delayMs);
 
         _logger.LogInformation(
@@ -242,48 +236,7 @@ public class Worker : BackgroundService
         CancellationToken cancellationToken)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(_connectTimeoutMs);
+        timeoutCts.CancelAfter(_reconnectPolicy.ConnectTimeoutMs);
         await socket.ConnectAsync(uri, timeoutCts.Token);
-    }
-
-    private int CalculateReconnectDelayMs(long currentAttempts)
-    {
-        var exponentialFactor = Math.Max(0L, currentAttempts - 1L);
-        var rawDelay = _reconnectBaseDelayMs * Math.Pow(2d, Math.Min(exponentialFactor, 10L));
-        var cappedDelay = Math.Min(rawDelay, _reconnectMaxDelayMs);
-        var jitterRange = cappedDelay * _reconnectJitterRatio;
-        var jitter = (Random.Shared.NextDouble() * 2d - 1d) * jitterRange;
-        var finalDelay = cappedDelay + jitter;
-        return Math.Max(1, (int)Math.Round(finalDelay));
-    }
-
-    private static int GetPositiveOrZero(string? value, int fallback)
-    {
-        if (!int.TryParse(value, out var parsed))
-        {
-            return fallback;
-        }
-
-        return parsed < 0 ? fallback : parsed;
-    }
-
-    private static int GetPositive(string? value, int fallback)
-    {
-        if (!int.TryParse(value, out var parsed) || parsed <= 0)
-        {
-            return fallback;
-        }
-
-        return parsed;
-    }
-
-    private static double GetJitterRatio(string? value, double fallback)
-    {
-        if (!double.TryParse(value, out var parsed) || parsed < 0d || parsed > 1d)
-        {
-            return fallback;
-        }
-
-        return parsed;
     }
 }

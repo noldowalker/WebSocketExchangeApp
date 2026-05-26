@@ -69,6 +69,11 @@ public sealed class ProcessingStats
         GetConnection(source).ResetReconnectCycleAttempts();
     }
 
+    public long GetReconnectAttemptsCurrentCycle(ExchangeSource source)
+    {
+        return GetConnection(source).GetReconnectAttemptsCurrentCycle();
+    }
+
     public void IncrementBatchesFlushed() => Interlocked.Increment(ref _batchesFlushedTotal);
     public void SetLastBatchSize(int batchSize) => Interlocked.Exchange(ref _lastBatchSize, batchSize);
 
@@ -135,6 +140,7 @@ public sealed class ProcessingStats
         public void IncrementConnectFailures() => Interlocked.Increment(ref _connectFailures);
         public void SetLastReconnectDelayMs(int delayMs) => Interlocked.Exchange(ref _lastReconnectDelayMs, delayMs);
         public void ResetReconnectCycleAttempts() => Interlocked.Exchange(ref _reconnectAttemptsCurrentCycle, 0);
+        public long GetReconnectAttemptsCurrentCycle() => Interlocked.Read(ref _reconnectAttemptsCurrentCycle);
 
         public ConnectionStatsSnapshot Snapshot(double elapsedSeconds)
         {
