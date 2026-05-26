@@ -5,7 +5,14 @@ var builder = WebApplication.CreateBuilder(args);
 var endpointsData = builder.Configuration.GetSection("EndpointsData").Get<List<EndpointDataOptions>>() ?? [];
 if (endpointsData.Count == 0)
 {
-    endpointsData.Add(new EndpointDataOptions());
+    endpointsData.Add(new EndpointDataOptions
+    {
+        Name = "default-socket-value",
+        Port = 5000,
+        Resource = "/ws/default-socket-value",
+        IntervalMs = 1000,
+        PayloadJsonResourceName = "binance-ticker.json"
+    });
 }
 
 var payloadsPath = Path.Combine(builder.Environment.ContentRootPath, "Payloads");

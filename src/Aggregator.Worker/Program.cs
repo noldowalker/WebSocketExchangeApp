@@ -2,6 +2,7 @@ using Aggregator.Core.Normalization;
 using Aggregator.Core.Persistence;
 using Aggregator.Infrastructure.Persistence;
 using Aggregator.Worker.Diagnostics;
+using Aggregator.Worker.Normalization;
 using Aggregator.Worker.Processing;
 using Aggregator.Worker;
 using Microsoft.EntityFrameworkCore;
@@ -13,7 +14,8 @@ var connectionString = builder.Configuration.GetConnectionString("Postgres")
 builder.Services.AddDbContextFactory<AggregatorDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-builder.Services.AddSingleton<ITickNormalizer, ExchangeATickNormalizer>();
+builder.Services.AddSingleton<ITickNormalizer<Aggregator.Core.Models.BinanceTick>, BinanceTickNormalizer>();
+builder.Services.AddSingleton<IExchangeSourceResolver, JsonExchangeSourceResolver>();
 builder.Services.AddSingleton<ProcessingStats>();
 builder.Services.AddSingleton<ITradeTickSink, PostgresTradeTickSink>();
 builder.Services.AddSingleton(sp =>

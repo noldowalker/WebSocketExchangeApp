@@ -24,7 +24,9 @@ public sealed class PostgresTradeTickSink : ITradeTickSink
         var entities = batch.Select(x => new TradeTickEntity
         {
             Source = x.Source,
-            Value = x.Value,
+            Ticker = x.Ticker,
+            Price = x.Price,
+            Volume = x.Volume,
             TimestampUtc = x.TimestampUtc
         });
 

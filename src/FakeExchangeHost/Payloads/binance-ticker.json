@@ -1,0 +1,1 @@
+{"name":"Binance","stream":"btcusdt@ticker","data":{"e":"24hrTicker","E":"{{TIMESTAMP_MS}}","s":"BTCUSDT","c":"{{PRICE}}","v":"{{VOLUME}}"}}

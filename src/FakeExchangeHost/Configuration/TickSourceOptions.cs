@@ -4,16 +4,16 @@ public sealed class TickSourceOptions
 {
     public static TickSourceOptions Default { get; } = new()
     {
-        Name = "exchange-a",
+        Name = "default-socket-value",
         Port = 5000,
-        Resource = "/ws/exchange-a",
+        Resource = "/ws/default-socket-value",
         IntervalMs = 1000,
-        PayloadJson = "{\"value\":42}"
+        PayloadJson = "{\"value\":\"default-socket-value\"}"
     };
 
-    public string Name { get; init; } = "exchange-a";
+    public string Name { get; init; } = "default-socket-value";
     public int Port { get; init; } = 5000;
-    public string Resource { get; init; } = "/ws/exchange-a";
+    public string Resource { get; init; } = "/ws/default-socket-value";
     public int IntervalMs { get; init; } = 1000;
-    public string PayloadJson { get; init; } = "{\"value\":42}";
+    public string PayloadJson { get; init; } = "{\"value\":\"default-socket-value\"}";
 }
