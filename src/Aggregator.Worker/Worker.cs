@@ -13,26 +13,26 @@ public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
     private readonly IReadOnlyList<ExchangeConnectionOptions> _connections;
-    private readonly IReconnectPolicy _reconnectPolicy;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IReconnectPolicyFactory _reconnectPolicyFactory;
     private readonly IExchangeWebSocketTransportFactory _transportFactory;
-    private readonly IExchangeTickNormalizerRouter _tickNormalizerRouter;
     private readonly BatchingTickProcessor _batchingTickProcessor;
     private readonly ProcessingStats _stats;
 
     public Worker(
         ILogger<Worker> logger,
-        List<ExchangeConnectionOptions> connections,
-        IReconnectPolicy reconnectPolicy,
+        IReadOnlyList<ExchangeConnectionOptions> connections,
+        IServiceScopeFactory scopeFactory,
+        IReconnectPolicyFactory reconnectPolicyFactory,
         IExchangeWebSocketTransportFactory transportFactory,
-        IExchangeTickNormalizerRouter tickNormalizerRouter,
         BatchingTickProcessor batchingTickProcessor,
         ProcessingStats stats)
     {
         _logger = logger;
         _connections = connections;
-        _reconnectPolicy = reconnectPolicy;
+        _scopeFactory = scopeFactory;
+        _reconnectPolicyFactory = reconnectPolicyFactory;
         _transportFactory = transportFactory;
-        _tickNormalizerRouter = tickNormalizerRouter;
         _batchingTickProcessor = batchingTickProcessor;
         _stats = stats;
     }
@@ -73,12 +73,16 @@ public class Worker : BackgroundService
         ChannelWriter<TradeTick> normalizedTicksWriter,
         CancellationToken stoppingToken)
     {
+        using var scope = _scopeFactory.CreateScope();
+        var tickNormalizerRouter = scope.ServiceProvider.GetRequiredService<IExchangeTickNormalizerRouter>();
+        var reconnectPolicy = _reconnectPolicyFactory.Create(connection.Reconnect);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             await using var transport = _transportFactory.Create();
             try
             {
-                await ConnectWithTimeoutAsync(transport, new Uri(connection.Url), stoppingToken);
+                await ConnectWithTimeoutAsync(transport, new Uri(connection.Url), reconnectPolicy, stoppingToken);
                 _stats.MarkStarted();
                 _stats.ResetReconnectCycleAttempts(connection.Source);
                 _logger.LogInformation("Connected to {Url} ({Source})", connection.Url, connection.Source);
@@ -86,6 +90,7 @@ public class Worker : BackgroundService
                 await ConsumeTransportAsync(
                     connection.Source,
                     transport,
+                    tickNormalizerRouter,
                     normalizedTicksWriter,
                     stoppingToken);
 
@@ -104,7 +109,7 @@ public class Worker : BackgroundService
                 _logger.LogWarning(ex, "WebSocket loop failed for {Source}. Will try to reconnect.", connection.Source);
             }
 
-            if (!await WaitBeforeReconnectAsync(connection, stoppingToken))
+            if (!await WaitBeforeReconnectAsync(connection, reconnectPolicy, stoppingToken))
             {
                 return;
             }
@@ -114,6 +119,7 @@ public class Worker : BackgroundService
     private async Task ConsumeTransportAsync(
         ExchangeSource source,
         IExchangeWebSocketTransport transport,
+        IExchangeTickNormalizerRouter tickNormalizerRouter,
         ChannelWriter<TradeTick> normalizedTicksWriter,
         CancellationToken cancellationToken)
     {
@@ -122,7 +128,7 @@ public class Worker : BackgroundService
             _stats.IncrementRawReceived(source);
             _stats.IncrementChannelRead(source);
 
-            if (_tickNormalizerRouter.TryNormalize(source, rawPayload, out var tick))
+            if (tickNormalizerRouter.TryNormalize(source, rawPayload, out var tick))
             {
                 _stats.IncrementNormalizedOk(source);
                 await normalizedTicksWriter.WriteAsync(tick!, cancellationToken);
@@ -157,12 +163,13 @@ public class Worker : BackgroundService
 
     private async Task<bool> WaitBeforeReconnectAsync(
         ExchangeConnectionOptions connection,
+        IReconnectPolicy reconnectPolicy,
         CancellationToken cancellationToken)
     {
         _stats.IncrementReconnectAttempt(connection.Source);
 
         var currentAttempts = _stats.GetReconnectAttemptsCurrentCycle(connection.Source);
-        if (!_reconnectPolicy.ShouldReconnect(currentAttempts))
+        if (!reconnectPolicy.ShouldReconnect(currentAttempts))
         {
             _logger.LogError(
                 "Reconnect attempts exceeded the configured maximum for {Source}. CurrentAttempts={CurrentAttempts}",
@@ -171,7 +178,7 @@ public class Worker : BackgroundService
             return false;
         }
 
-        var delayMs = _reconnectPolicy.CalculateDelayMs(currentAttempts);
+        var delayMs = reconnectPolicy.CalculateDelayMs(currentAttempts);
         _stats.SetLastReconnectDelayMs(connection.Source, delayMs);
 
         _logger.LogInformation(
@@ -187,10 +194,11 @@ public class Worker : BackgroundService
     private async Task ConnectWithTimeoutAsync(
         IExchangeWebSocketTransport transport,
         Uri uri,
+        IReconnectPolicy reconnectPolicy,
         CancellationToken cancellationToken)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(_reconnectPolicy.ConnectTimeoutMs);
+        timeoutCts.CancelAfter(reconnectPolicy.ConnectTimeoutMs);
         await transport.ConnectAsync(uri, timeoutCts.Token);
     }
 }

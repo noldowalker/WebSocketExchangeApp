@@ -6,6 +6,7 @@ using Aggregator.Worker.Diagnostics;
 using Aggregator.Worker.Normalization;
 using Aggregator.Worker.Processing;
 using Aggregator.Worker.Transport;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -110,6 +111,12 @@ public class WorkerTests
         ProcessingStats? stats = null)
     {
         var processingStats = stats ?? new ProcessingStats();
+        var scopeFactory = CreateScopeFactory(router);
+        var reconnectPolicyFactory = new Mock<IReconnectPolicyFactory>();
+        reconnectPolicyFactory
+            .Setup(x => x.Create(It.IsAny<ReconnectOptions>()))
+            .Returns(reconnectPolicy);
+
         var batchingProcessor = new BatchingTickProcessor(
             sink,
             new BatchingOptions
@@ -124,11 +131,12 @@ public class WorkerTests
             [new ExchangeConnectionOptions
             {
                 Url = "ws://localhost:5000/ws/binance",
-                Source = ExchangeSource.Binance
+                Source = ExchangeSource.Binance,
+                Reconnect = new ReconnectOptions()
             }],
-            reconnectPolicy,
+            scopeFactory.Object,
+            reconnectPolicyFactory.Object,
             transportFactory,
-            router,
             batchingProcessor,
             processingStats);
     }
@@ -140,22 +148,37 @@ public class WorkerTests
         return factoryMock;
     }
 
+    private static Mock<IServiceScopeFactory> CreateScopeFactory(IExchangeTickNormalizerRouter router)
+    {
+        var serviceProvider = new Mock<IServiceProvider>();
+        serviceProvider
+            .Setup(x => x.GetService(typeof(IExchangeTickNormalizerRouter)))
+            .Returns(router);
+
+        var scope = new Mock<IServiceScope>();
+        scope.SetupGet(x => x.ServiceProvider).Returns(serviceProvider.Object);
+
+        var scopeFactory = new Mock<IServiceScopeFactory>();
+        scopeFactory.Setup(x => x.CreateScope()).Returns(scope.Object);
+        return scopeFactory;
+    }
+
     private sealed class TestableWorker : Aggregator.Worker.Worker
     {
         public TestableWorker(
             ILogger<Aggregator.Worker.Worker> logger,
-            List<ExchangeConnectionOptions> connections,
-            IReconnectPolicy reconnectPolicy,
+            IReadOnlyList<ExchangeConnectionOptions> connections,
+            IServiceScopeFactory scopeFactory,
+            IReconnectPolicyFactory reconnectPolicyFactory,
             IExchangeWebSocketTransportFactory transportFactory,
-            IExchangeTickNormalizerRouter tickNormalizerRouter,
             BatchingTickProcessor batchingTickProcessor,
             ProcessingStats stats)
             : base(
                 logger,
                 connections,
-                reconnectPolicy,
+                scopeFactory,
+                reconnectPolicyFactory,
                 transportFactory,
-                tickNormalizerRouter,
                 batchingTickProcessor,
                 stats)
         {
