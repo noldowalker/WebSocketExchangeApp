@@ -104,7 +104,9 @@ dotnet run --project src/FakeExchangeHost/FakeExchangeHost.csproj
 - `ws://localhost:5001/ws/coinbase`
 - `ws://localhost:5002/ws/kraken`
 
-Если локально ты менял конфиг, ориентируйся на `src/Aggregator.Application/appsettings.json`.
+Если хочется поменять конфигурации:
+src/FakeExchangeHost/appsettings.json - для источника
+src/Aggregator.Application/appsettings.json - для приемника
 
 ### 3. Запустить агрегатор
 
@@ -132,6 +134,8 @@ dotnet run --project src/Aggregator.Application/Aggregator.Application.csproj
 - `GET`
 
 Если порт `5180` занят, приложение продолжит работать, но endpoint со статистикой не поднимется. Это будет видно в логах.
+
+Так же упрощенная статистика выводится в консоль.
 
 ### Что возвращает endpoint
 
