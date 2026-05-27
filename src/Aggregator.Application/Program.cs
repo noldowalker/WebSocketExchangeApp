@@ -15,9 +15,9 @@ using Microsoft.EntityFrameworkCore;
 var builder = Host.CreateApplicationBuilder(args);
 var configuration = builder.Configuration;
 
-var connectionString = WorkerConfigurationReader.GetRequiredPostgresConnectionString(configuration);
-var exchangeConnections = WorkerConfigurationReader.GetRequiredExchangeConnections(configuration);
-var batchingOptions = WorkerConfigurationReader.GetBatchingOptions(configuration);
+var connectionString = ApplicationConfigurationReader.GetRequiredPostgresConnectionString(configuration);
+var exchangeConnections = ApplicationConfigurationReader.GetRequiredExchangeConnections(configuration);
+var batchingOptions = ApplicationConfigurationReader.GetBatchingOptions(configuration);
 
 builder.Services.AddDbContextFactory<AggregatorDbContext>(options =>
     options.UseNpgsql(connectionString));
@@ -35,7 +35,7 @@ builder.Services.AddSingleton<ProcessingStats>();
 builder.Services.AddSingleton<ITradeTickSink, PostgresTradeTickSink>();
 builder.Services.AddSingleton<BatchingTickProcessor>();
 builder.Services.AddHostedService<DatabaseMigrationHostedService>();
-builder.Services.AddHostedService<MarketDataIngestionWorker>();
+builder.Services.AddHostedService<ExchangeTicksIngestionWorker>();
 builder.Services.AddHostedService<StatsHttpServerService>();
 
 var host = builder.Build();

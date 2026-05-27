@@ -4,7 +4,7 @@ using Aggregator.Application.Models;
 
 namespace Aggregator.Application.Configuration;
 
-public static class WorkerConfigurationReader
+public static class ApplicationConfigurationReader
 {
     public static string GetRequiredPostgresConnectionString(IConfiguration configuration)
     {

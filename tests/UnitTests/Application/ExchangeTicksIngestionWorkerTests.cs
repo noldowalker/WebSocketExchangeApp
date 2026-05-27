@@ -13,7 +13,7 @@ using Moq;
 
 namespace UnitTests.Application;
 
-public class MarketDataIngestionWorkerTests
+public class ExchangeTicksIngestionWorkerTests
 {
     [Test]
     public async Task ExecuteAsync_WhenMessageIsNormalized_WritesTickToSink()
@@ -104,7 +104,7 @@ public class MarketDataIngestionWorkerTests
         Assert.That(snapshot.Connections["Binance"].ConnectFailures, Is.EqualTo(1));
     }
 
-    private static TestableMarketDataIngestionWorker CreateWorker(
+    private static TestableExchangeTicksIngestionWorker CreateWorker(
         IReconnectPolicy reconnectPolicy,
         IExchangeWebSocketTransportFactory transportFactory,
         IExchangeTickNormalizerRouter router,
@@ -127,8 +127,8 @@ public class MarketDataIngestionWorkerTests
             },
             processingStats);
 
-        return new TestableMarketDataIngestionWorker(
-            Mock.Of<ILogger<Aggregator.Application.MarketDataIngestionWorker>>(),
+        return new TestableExchangeTicksIngestionWorker(
+            Mock.Of<ILogger<Aggregator.Application.ExchangeTicksIngestionWorker>>(),
             [new ExchangeConnectionOptions
             {
                 Url = "ws://localhost:5000/ws/binance",
@@ -164,10 +164,10 @@ public class MarketDataIngestionWorkerTests
         return scopeFactory;
     }
 
-    private sealed class TestableMarketDataIngestionWorker : Aggregator.Application.MarketDataIngestionWorker
+    private sealed class TestableExchangeTicksIngestionWorker : Aggregator.Application.ExchangeTicksIngestionWorker
     {
-        public TestableMarketDataIngestionWorker(
-            ILogger<Aggregator.Application.MarketDataIngestionWorker> logger,
+        public TestableExchangeTicksIngestionWorker(
+            ILogger<Aggregator.Application.ExchangeTicksIngestionWorker> logger,
             IReadOnlyList<ExchangeConnectionOptions> connections,
             IServiceScopeFactory scopeFactory,
             IReconnectPolicyFactory reconnectPolicyFactory,

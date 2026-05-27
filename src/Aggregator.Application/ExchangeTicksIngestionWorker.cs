@@ -10,9 +10,9 @@ using Aggregator.Application.Transport;
 
 namespace Aggregator.Application;
 
-public class MarketDataIngestionWorker : BackgroundService
+public class ExchangeTicksIngestionWorker : BackgroundService
 {
-    private readonly ILogger<MarketDataIngestionWorker> _logger;
+    private readonly ILogger<ExchangeTicksIngestionWorker> _logger;
     private readonly IReadOnlyList<ExchangeConnectionOptions> _connections;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IReconnectPolicyFactory _reconnectPolicyFactory;
@@ -20,8 +20,8 @@ public class MarketDataIngestionWorker : BackgroundService
     private readonly BatchingTickProcessor _batchingTickProcessor;
     private readonly ProcessingStats _processingStats;
 
-    public MarketDataIngestionWorker(
-        ILogger<MarketDataIngestionWorker> logger,
+    public ExchangeTicksIngestionWorker(
+        ILogger<ExchangeTicksIngestionWorker> logger,
         IReadOnlyList<ExchangeConnectionOptions> connections,
         IServiceScopeFactory scopeFactory,
         IReconnectPolicyFactory reconnectPolicyFactory,
