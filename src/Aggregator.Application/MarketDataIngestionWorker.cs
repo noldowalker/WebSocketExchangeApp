@@ -83,7 +83,16 @@ public class MarketDataIngestionWorker : BackgroundService
             await using var transport = _transportFactory.Create();
             try
             {
-                await ConnectWithTimeoutAsync(transport, new Uri(connection.Url), reconnectPolicy, stoppingToken);
+                try
+                {
+                    await ConnectWithTimeoutAsync(transport, new Uri(connection.Url), reconnectPolicy, stoppingToken);
+                }
+                catch
+                {
+                    _processingStats.IncrementConnectFailures(connection.Source);
+                    throw;
+                }
+
                 _processingStats.MarkStarted();
                 _processingStats.ResetReconnectCycleAttempts(connection.Source);
                 _logger.LogInformation("Connected to {Url} ({Source})", connection.Url, connection.Source);
@@ -106,7 +115,6 @@ public class MarketDataIngestionWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _processingStats.IncrementConnectFailures(connection.Source);
                 _logger.LogWarning(ex, "WebSocket loop failed for {Source}. Will try to reconnect.", connection.Source);
             }
 
