@@ -125,7 +125,8 @@ public class ExchangeTicksIngestionWorkerTests
                 BatchSize = 10,
                 BatchTimeoutMs = 1000
             },
-            processingStats);
+            processingStats,
+            Mock.Of<ILogger<BatchingTickProcessor>>());
 
         return new TestableExchangeTicksIngestionWorker(
             Mock.Of<ILogger<Aggregator.Application.ExchangeTicksIngestionWorker>>(),

@@ -2,6 +2,7 @@
 using Aggregator.Domain.Models;
 using Aggregator.Application.Diagnostics;
 using Aggregator.Application.Processing;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace UnitTests.Application.Processing;
@@ -93,7 +94,8 @@ public class BatchingTickProcessorTests
                 BatchSize = batchSize,
                 BatchTimeoutMs = batchTimeoutMs
             },
-            new ProcessingStats());
+            new ProcessingStats(),
+            Mock.Of<ILogger<BatchingTickProcessor>>());
     }
 
     private static TradeTick CreateTick(string ticker, int secondsOffset)
