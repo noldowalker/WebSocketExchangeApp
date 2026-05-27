@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aggregator.Worker", "src\Aggregator.Worker\Aggregator.Worker.csproj", "{80F13426-5452-4CF3-85F5-B33F84366A6F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aggregator.Application", "src\Aggregator.Application\Aggregator.Application.csproj", "{80F13426-5452-4CF3-85F5-B33F84366A6F}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FakeExchangeHost", "src\FakeExchangeHost\FakeExchangeHost.csproj", "{83D4A5C7-E3B3-4C53-AF44-851A9F03B6B4}"
 EndProject
@@ -9,6 +9,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aggregator.Infrastructure", "src\Aggregator.Infrastructure\Aggregator.Infrastructure.csproj", "{BB5144B6-9A1F-4F4F-BBBB-DD3CDE793DEB}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnitTests", "tests\UnitTests\UnitTests.csproj", "{3BC48823-B9C2-4D4C-9637-57B7FB16BE74}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aggregator.Domain", "src\Aggregator.Domain\Aggregator.Domain.csproj", "{A1283436-5263-41F0-B6FC-675BF67D0F94}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -36,5 +38,9 @@ Global
 		{3BC48823-B9C2-4D4C-9637-57B7FB16BE74}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3BC48823-B9C2-4D4C-9637-57B7FB16BE74}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3BC48823-B9C2-4D4C-9637-57B7FB16BE74}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1283436-5263-41F0-B6FC-675BF67D0F94}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1283436-5263-41F0-B6FC-675BF67D0F94}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1283436-5263-41F0-B6FC-675BF67D0F94}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1283436-5263-41F0-B6FC-675BF67D0F94}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

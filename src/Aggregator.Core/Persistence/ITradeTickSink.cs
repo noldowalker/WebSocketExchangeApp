@@ -1,4 +1,4 @@
-using Aggregator.Core.Models;
+using Aggregator.Domain.Models;
 
 namespace Aggregator.Core.Persistence;
 

@@ -1,4 +1,5 @@
-using Aggregator.Core.Normalization;
+﻿using Aggregator.Core.Normalization;
+using Aggregator.Application.Normalization;
 
 namespace UnitTests.Core.Normalization;
 

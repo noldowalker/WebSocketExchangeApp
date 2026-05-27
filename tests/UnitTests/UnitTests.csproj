@@ -20,7 +20,8 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Aggregator.Core\Aggregator.Core.csproj" />
-        <ProjectReference Include="..\..\src\Aggregator.Worker\Aggregator.Worker.csproj" />
+        <ProjectReference Include="..\..\src\Aggregator.Domain\Aggregator.Domain.csproj" />
+        <ProjectReference Include="..\..\src\Aggregator.Application\Aggregator.Application.csproj" />
     </ItemGroup>
 
     <ItemGroup>

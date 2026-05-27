@@ -1,5 +1,5 @@
-using Aggregator.Core.Models;
 using Aggregator.Core.Persistence;
+using Aggregator.Domain.Models;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using System.Data;
