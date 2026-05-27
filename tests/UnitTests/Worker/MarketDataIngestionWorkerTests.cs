@@ -12,7 +12,7 @@ using Moq;
 
 namespace UnitTests.Worker;
 
-public class WorkerTests
+public class MarketDataIngestionWorkerTests
 {
     [Test]
     public async Task ExecuteAsync_WhenMessageIsNormalized_WritesTickToSink()
@@ -103,7 +103,7 @@ public class WorkerTests
         Assert.That(snapshot.Connections["Binance"].ConnectFailures, Is.EqualTo(1));
     }
 
-    private static TestableWorker CreateWorker(
+    private static TestableMarketDataIngestionWorker CreateWorker(
         IReconnectPolicy reconnectPolicy,
         IExchangeWebSocketTransportFactory transportFactory,
         IExchangeTickNormalizerRouter router,
@@ -126,8 +126,8 @@ public class WorkerTests
             },
             processingStats);
 
-        return new TestableWorker(
-            Mock.Of<ILogger<Aggregator.Worker.Worker>>(),
+        return new TestableMarketDataIngestionWorker(
+            Mock.Of<ILogger<Aggregator.Worker.MarketDataIngestionWorker>>(),
             [new ExchangeConnectionOptions
             {
                 Url = "ws://localhost:5000/ws/binance",
@@ -163,16 +163,16 @@ public class WorkerTests
         return scopeFactory;
     }
 
-    private sealed class TestableWorker : Aggregator.Worker.Worker
+    private sealed class TestableMarketDataIngestionWorker : Aggregator.Worker.MarketDataIngestionWorker
     {
-        public TestableWorker(
-            ILogger<Aggregator.Worker.Worker> logger,
+        public TestableMarketDataIngestionWorker(
+            ILogger<Aggregator.Worker.MarketDataIngestionWorker> logger,
             IReadOnlyList<ExchangeConnectionOptions> connections,
             IServiceScopeFactory scopeFactory,
             IReconnectPolicyFactory reconnectPolicyFactory,
             IExchangeWebSocketTransportFactory transportFactory,
             BatchingTickProcessor batchingTickProcessor,
-            ProcessingStats stats)
+            ProcessingStats processingStats)
             : base(
                 logger,
                 connections,
@@ -180,7 +180,7 @@ public class WorkerTests
                 reconnectPolicyFactory,
                 transportFactory,
                 batchingTickProcessor,
-                stats)
+                processingStats)
         {
         }
 

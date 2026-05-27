@@ -34,7 +34,7 @@ builder.Services.AddSingleton<ProcessingStats>();
 builder.Services.AddSingleton<ITradeTickSink, PostgresTradeTickSink>();
 builder.Services.AddSingleton<BatchingTickProcessor>();
 builder.Services.AddHostedService<DatabaseMigrationHostedService>();
-builder.Services.AddHostedService<Worker>();
+builder.Services.AddHostedService<MarketDataIngestionWorker>();
 builder.Services.AddHostedService<StatsHttpServerService>();
 
 var host = builder.Build();

@@ -9,24 +9,24 @@ using Aggregator.Worker.Transport;
 
 namespace Aggregator.Worker;
 
-public class Worker : BackgroundService
+public class MarketDataIngestionWorker : BackgroundService
 {
-    private readonly ILogger<Worker> _logger;
+    private readonly ILogger<MarketDataIngestionWorker> _logger;
     private readonly IReadOnlyList<ExchangeConnectionOptions> _connections;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IReconnectPolicyFactory _reconnectPolicyFactory;
     private readonly IExchangeWebSocketTransportFactory _transportFactory;
     private readonly BatchingTickProcessor _batchingTickProcessor;
-    private readonly ProcessingStats _stats;
+    private readonly ProcessingStats _processingStats;
 
-    public Worker(
-        ILogger<Worker> logger,
+    public MarketDataIngestionWorker(
+        ILogger<MarketDataIngestionWorker> logger,
         IReadOnlyList<ExchangeConnectionOptions> connections,
         IServiceScopeFactory scopeFactory,
         IReconnectPolicyFactory reconnectPolicyFactory,
         IExchangeWebSocketTransportFactory transportFactory,
         BatchingTickProcessor batchingTickProcessor,
-        ProcessingStats stats)
+        ProcessingStats processingStats)
     {
         _logger = logger;
         _connections = connections;
@@ -34,7 +34,7 @@ public class Worker : BackgroundService
         _reconnectPolicyFactory = reconnectPolicyFactory;
         _transportFactory = transportFactory;
         _batchingTickProcessor = batchingTickProcessor;
-        _stats = stats;
+        _processingStats = processingStats;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -45,16 +45,16 @@ public class Worker : BackgroundService
             return;
         }
 
-        var normalizedTicks = Channel.CreateBounded<TradeTick>(new BoundedChannelOptions(4096)
+        var normalizedTicksChannel = Channel.CreateBounded<TradeTick>(new BoundedChannelOptions(4096)
         {
             SingleReader = true,
             SingleWriter = false,
             FullMode = BoundedChannelFullMode.Wait
         });
 
-        var processorTask = ConsumeNormalizedTicksAsync(normalizedTicks.Reader, stoppingToken);
+        var normalizedTicksConsumerTask = ProcessNormalizedTicksAsync(normalizedTicksChannel.Reader, stoppingToken);
         var connectionTasks = _connections
-            .Select(connection => RunConnectionLoopAsync(connection, normalizedTicks.Writer, stoppingToken))
+            .Select(connection => RunConnectionLoopAsync(connection, normalizedTicksChannel.Writer, stoppingToken))
             .ToArray();
 
         try
@@ -63,8 +63,8 @@ public class Worker : BackgroundService
         }
         finally
         {
-            normalizedTicks.Writer.TryComplete();
-            await processorTask;
+            normalizedTicksChannel.Writer.TryComplete();
+            await normalizedTicksConsumerTask;
         }
     }
 
@@ -83,11 +83,11 @@ public class Worker : BackgroundService
             try
             {
                 await ConnectWithTimeoutAsync(transport, new Uri(connection.Url), reconnectPolicy, stoppingToken);
-                _stats.MarkStarted();
-                _stats.ResetReconnectCycleAttempts(connection.Source);
+                _processingStats.MarkStarted();
+                _processingStats.ResetReconnectCycleAttempts(connection.Source);
                 _logger.LogInformation("Connected to {Url} ({Source})", connection.Url, connection.Source);
 
-                await ConsumeTransportAsync(
+                await ReadAndNormalizeRawDataAsync(
                     connection.Source,
                     transport,
                     tickNormalizerRouter,
@@ -105,7 +105,7 @@ public class Worker : BackgroundService
             }
             catch (Exception ex)
             {
-                _stats.IncrementConnectFailures(connection.Source);
+                _processingStats.IncrementConnectFailures(connection.Source);
                 _logger.LogWarning(ex, "WebSocket loop failed for {Source}. Will try to reconnect.", connection.Source);
             }
 
@@ -116,7 +116,7 @@ public class Worker : BackgroundService
         }
     }
 
-    private async Task ConsumeTransportAsync(
+    private async Task ReadAndNormalizeRawDataAsync(
         ExchangeSource source,
         IExchangeWebSocketTransport transport,
         IExchangeTickNormalizerRouter tickNormalizerRouter,
@@ -125,22 +125,22 @@ public class Worker : BackgroundService
     {
         await foreach (var rawPayload in transport.ReadMessagesAsync(cancellationToken))
         {
-            _stats.IncrementRawReceived(source);
-            _stats.IncrementChannelRead(source);
+            _processingStats.IncrementRawReceived(source);
+            _processingStats.IncrementChannelRead(source);
 
             if (tickNormalizerRouter.TryNormalize(source, rawPayload, out var tick))
             {
-                _stats.IncrementNormalizedOk(source);
+                _processingStats.IncrementNormalizedOk(source);
                 await normalizedTicksWriter.WriteAsync(tick!, cancellationToken);
             }
             else
             {
-                _stats.IncrementNormalizedFailed(source);
+                _processingStats.IncrementNormalizedFailed(source);
             }
         }
     }
 
-    private async Task ConsumeNormalizedTicksAsync(
+    private async Task ProcessNormalizedTicksAsync(
         ChannelReader<TradeTick> reader,
         CancellationToken cancellationToken)
     {
@@ -166,9 +166,9 @@ public class Worker : BackgroundService
         IReconnectPolicy reconnectPolicy,
         CancellationToken cancellationToken)
     {
-        _stats.IncrementReconnectAttempt(connection.Source);
+        _processingStats.IncrementReconnectAttempt(connection.Source);
 
-        var currentAttempts = _stats.GetReconnectAttemptsCurrentCycle(connection.Source);
+        var currentAttempts = _processingStats.GetReconnectAttemptsCurrentCycle(connection.Source);
         if (!reconnectPolicy.ShouldReconnect(currentAttempts))
         {
             _logger.LogError(
@@ -179,7 +179,7 @@ public class Worker : BackgroundService
         }
 
         var delayMs = reconnectPolicy.CalculateDelayMs(currentAttempts);
-        _stats.SetLastReconnectDelayMs(connection.Source, delayMs);
+        _processingStats.SetLastReconnectDelayMs(connection.Source, delayMs);
 
         _logger.LogInformation(
             "Reconnect attempt {Attempt} for {Source} in {DelayMs}ms.",
