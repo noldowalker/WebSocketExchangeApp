@@ -158,7 +158,7 @@ public class MarketDataIngestionWorker : BackgroundService
         }
         finally
         {
-            await _batchingTickProcessor.FlushAsync(cancellationToken);
+            await _batchingTickProcessor.FlushAsync(CancellationToken.None);
         }
     }
 
