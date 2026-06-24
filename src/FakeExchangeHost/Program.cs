@@ -3,6 +3,7 @@ using FakeExchangeHost.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
 var endpointsData = builder.Configuration.GetSection("EndpointsData").Get<List<EndpointDataOptions>>() ?? [];
+var bindHost = builder.Configuration["BindHost"] ?? "localhost";
 if (endpointsData.Count == 0)
 {
     endpointsData.Add(new EndpointDataOptions
@@ -19,7 +20,7 @@ var payloadsPath = Path.Combine(builder.Environment.ContentRootPath, "Payloads")
 var tickSources = endpointsData.Select(x => BuildTickSource(x, payloadsPath)).ToList();
 
 var urls = tickSources
-    .Select(x => $"http://localhost:{x.Port}")
+    .Select(x => $"http://{bindHost}:{x.Port}")
     .Distinct(StringComparer.OrdinalIgnoreCase);
 
 builder.WebHost.UseUrls(urls.ToArray());

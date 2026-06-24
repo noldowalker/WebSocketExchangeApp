@@ -17,6 +17,9 @@
 
 ## Как устроено решение
 
+- Поток данных в приложении выглядит так:
+  `WebSocket -> нормализация -> bounded channel -> batching -> PostgreSQL`
+
 - `src/Aggregator.Domain`  
   Здесь лежит основная предметная модель `TradeTick`, с которой дальше работает приложение.
 
@@ -34,6 +37,32 @@
 
 - `tests/UnitTests`  
   Здесь лежат модульные тесты для нормализации, пакетной записи, переподключения и вспомогательной логики.
+
+### Ключевые архитектурные решения
+
+- **Нормализация вынесена по источникам.**  
+  У каждой биржи свой формат сообщения, поэтому разбор сделан отдельными normalizer'ами, а дальше данные приводятся к общему `TradeTick`.
+
+- **После нормализации используется один внутренний поток данных.**  
+  Все нормализованные сообщения попадают в общий `Channel`, после которого работает один consumer. Это отделяет параллельное чтение из нескольких WebSocket-подключений от последовательной пакетной записи в базу.
+
+- **Очередь ограничена по размеру.**  
+  Используется bounded `Channel`, чтобы память не росла бесконечно, если запись в PostgreSQL начнет отставать. При заполнении очереди producers начинают ждать освобождения места.
+
+- **Пакетная запись вынесена в отдельный процессор.**  
+  `BatchingTickProcessor` накапливает данные до нужного размера батча или таймаута, а затем отправляет их на запись одним запросом. Это уменьшает число обращений к PostgreSQL.
+
+- **Удаление дублей сделано в два слоя.**  
+  В памяти дубли отсекаются внутри текущего батча через `HashSet`, а в PostgreSQL финальная защита обеспечивается уникальным индексом и `ON CONFLICT DO NOTHING`.
+
+- **Работа с базой отделена от накопления батча.**  
+  `BatchingTickProcessor` не держит внутри долгоживущий `DbContext`. Запись вынесена в `ITradeTickSink`, который создает новый контекст через `IDbContextFactory` на конкретную операцию записи.
+
+- **Переподключение настраивается отдельно для каждого источника.**  
+  Для каждого WebSocket-подключения задаются собственные параметры reconnect с timeout, exponential backoff и jitter.
+
+- **Есть встроенная статистика работы.**  
+  Приложение считает общее число сообщений, число успешных нормализаций, reconnect attempts, размеры батчей и отдает это через HTTP endpoint.
 
 ## Требования
 
@@ -122,6 +151,85 @@ dotnet run --project src/Aggregator.Application/Aggregator.Application.csproj
 4. начинает читать сообщения;
 5. приводит их к единому виду;
 6. сохраняет данные в PostgreSQL.
+
+## Запуск через Docker Compose
+
+В репозитории есть готовый `compose.yaml`, который поднимает весь стенд:
+
+- `postgres` — PostgreSQL с volume для данных;
+- `fake-exchange` — тестовые WebSocket-источники;
+- `aggregator` — приложение-агрегатор.
+
+### Что нужно
+
+- Docker Desktop или Docker Engine с `docker compose`
+
+### Запуск
+
+```bash
+docker compose up --build
+```
+
+Если нужно запустить контейнеры в фоне:
+
+```bash
+docker compose up --build -d
+```
+
+### Что будет доступно с хоста
+
+- PostgreSQL: `localhost:5432`
+- WebSocket-источники:
+  - `ws://localhost:5000/ws/binance`
+  - `ws://localhost:5001/ws/coinbase`
+  - `ws://localhost:5002/ws/kraken`
+- endpoint статистики:
+  - `http://localhost:5180/debug/stats`
+
+### Как проверить, что все работает
+
+Посмотреть логи агрегатора:
+
+```bash
+docker compose logs -f aggregator
+```
+
+Если все в порядке, в логах будут:
+
+- подключения к `binance`, `coinbase`, `kraken`;
+- сообщения вида `Processed messages: ...`.
+
+Проверить, что данные пишутся в PostgreSQL:
+
+```bash
+docker compose exec postgres psql -U aggregator_app -d postgres -c "select count(*) from trade_ticks;"
+```
+
+Посмотреть JSON со статистикой:
+
+```bash
+curl http://localhost:5180/debug/stats
+```
+
+Для Windows PowerShell:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing "http://localhost:5180/debug/stats" | Select-Object -ExpandProperty Content
+```
+
+### Остановка
+
+Остановить контейнеры:
+
+```bash
+docker compose down
+```
+
+Остановить контейнеры и удалить volume PostgreSQL:
+
+```bash
+docker compose down -v
+```
 
 ## Статистика работы
 

@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: wsapp-postgres
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: aggregator_app
+      POSTGRES_PASSWORD: change_me_strong_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aggregator_app -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  fake-exchange:
+    build:
+      context: .
+      dockerfile: src/FakeExchangeHost/Dockerfile
+    container_name: wsapp-fake-exchange
+    environment:
+      BindHost: 0.0.0.0
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  aggregator:
+    build:
+      context: .
+      dockerfile: src/Aggregator.Application/Dockerfile
+    container_name: wsapp-aggregator
+    ports:
+      - "5180:5180"
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=postgres;Username=aggregator_app;Password=change_me_strong_password
+      Exchange__Connections__0__Url: ws://fake-exchange:5000/ws/binance
+      Exchange__Connections__1__Url: ws://fake-exchange:5001/ws/coinbase
+      Exchange__Connections__2__Url: ws://fake-exchange:5002/ws/kraken
+      Stats__BindHost: +
+    depends_on:
+      postgres:
+        condition: service_healthy
+      fake-exchange:
+        condition: service_started
+
+volumes:
+  postgres_data:

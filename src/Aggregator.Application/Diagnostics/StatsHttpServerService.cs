@@ -9,12 +9,16 @@ public sealed class StatsHttpServerService : BackgroundService
     private readonly ProcessingStats _stats;
     private readonly ILogger<StatsHttpServerService> _logger;
     private readonly HttpListener _listener = new();
+    private readonly string _statsPrefix;
 
-    public StatsHttpServerService(ProcessingStats stats, ILogger<StatsHttpServerService> logger)
+    public StatsHttpServerService(IConfiguration configuration, ProcessingStats stats, ILogger<StatsHttpServerService> logger)
     {
         _stats = stats;
         _logger = logger;
-        _listener.Prefixes.Add("http://localhost:5180/");
+        var bindHost = configuration["Stats:BindHost"] ?? "localhost";
+        var bindPort = configuration["Stats:Port"] ?? "5180";
+        _statsPrefix = $"http://{bindHost}:{bindPort}/";
+        _listener.Prefixes.Add(_statsPrefix);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -22,13 +26,14 @@ public sealed class StatsHttpServerService : BackgroundService
         try
         {
             _listener.Start();
-            _logger.LogInformation("Stats endpoint listening on http://localhost:5180/debug/stats");
+            _logger.LogInformation("Stats endpoint listening on {StatsUrl}", $"{_statsPrefix}debug/stats");
         }
         catch (HttpListenerException ex)
         {
             _logger.LogWarning(
                 ex,
-                "Stats endpoint could not start on http://localhost:5180/debug/stats. The worker will continue without HTTP stats.");
+                "Stats endpoint could not start on {StatsUrl}. The worker will continue without HTTP stats.",
+                $"{_statsPrefix}debug/stats");
             return;
         }
 
